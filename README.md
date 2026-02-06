@@ -4,7 +4,10 @@
 
 **智能图像切片工具 - AI 驱动的漫画分镜 & 素材拆解神器**
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/Tera-Dark/ArtClipper-AI)
+[![Live Demo](https://img.shields.io/badge/🚀_在线体验-ArtClipper_AI-blue?style=for-the-badge)](https://art-clipper-ai.vercel.app/)
+[![Deploy with Vercel](https://img.shields.io/badge/Deploy-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/new/clone?repository-url=https://github.com/Tera-Dark/ArtClipper-AI)
+
+**👉 [立即体验](https://art-clipper-ai.vercel.app/) 👈**
 
 </div>
 
