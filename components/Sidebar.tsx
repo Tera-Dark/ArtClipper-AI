@@ -11,6 +11,8 @@ import {
 interface SidebarProps {
   activeFile: ImageFile | null;
   filesCount: number;
+  slicedFilesCount?: number; // Number of files that have slices
+  totalSliceCount?: number;  // Total number of slices across all files
   onModeChange: (mode: SliceMode) => void;
   onGridUpdate: (rows: number, cols: number) => void;
   onScanConfigChange: (tolerance: number) => void;
@@ -41,6 +43,8 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({
   activeFile,
   filesCount,
+  slicedFilesCount = 0,
+  totalSliceCount = 0,
   onModeChange,
   onGridUpdate,
   onScanConfigChange,
@@ -381,9 +385,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {filesCount > 1 && (
           <section>
             <div className="flex justify-between items-center mb-3">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">批量操作 (全部)</label>
-              <span className="bg-slate-100 text-slate-400 text-[9px] px-1.5 py-0.5 rounded font-mono">ALL</span>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">批量操作</label>
+              {slicedFilesCount > 0 && (
+                <span className="bg-green-100 text-green-600 text-[9px] px-1.5 py-0.5 rounded font-semibold">
+                  {slicedFilesCount} 张已切片 / {totalSliceCount} 个切片
+                </span>
+              )}
             </div>
+
+            {/* Quick Export All Slices Button */}
+            {totalSliceCount > 0 && (
+              <button
+                onClick={() => onBatchAction('export')}
+                disabled={isProcessing}
+                className="w-full mb-3 py-3 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 disabled:from-slate-200 disabled:to-slate-200 text-white disabled:text-slate-400 rounded-xl font-bold text-sm flex items-center justify-center shadow-lg shadow-green-200 transition-all"
+              >
+                <ArchiveBoxArrowDownIcon className="w-5 h-5 mr-2" />
+                一键导出全部切片 ({totalSliceCount})
+              </button>
+            )}
+
             <div className="grid grid-cols-5 gap-2">
               <BatchButton action="ai" icon={SparklesIcon} label="AI" />
               <BatchButton action="scan" icon={WrenchScrewdriverIcon} label="扫描" />
@@ -401,8 +422,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <button
                       onClick={onPauseResume}
                       className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isPaused
-                          ? 'bg-green-500 text-white hover:bg-green-600'
-                          : 'bg-yellow-500 text-white hover:bg-yellow-600'
+                        ? 'bg-green-500 text-white hover:bg-green-600'
+                        : 'bg-yellow-500 text-white hover:bg-yellow-600'
                         }`}
                     >
                       {isPaused ? (

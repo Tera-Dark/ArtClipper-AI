@@ -627,59 +627,60 @@ function App() {
     };
 
     const handleBatchExport = async () => {
+        // Smart export: export all images that have slices
+        // Priority: selected images > all images with slices
+
         let filesToExport: ImageFile[] = [];
 
         if (selectedIds.size > 0) {
-            filesToExport = files.filter(f => selectedIds.has(f.id));
+            // Export selected images only
+            filesToExport = files.filter(f => selectedIds.has(f.id) && f.slices && f.slices.length > 0);
+            if (filesToExport.length === 0) {
+                showNotification("选中的图片都没有切片", 'error');
+                return;
+            }
         } else {
-            if (files.length === 0) return;
-            if (window.confirm(`当前未选中图片。是否导出全部 ${files.length} 张图片的所有切片？`)) {
-                filesToExport = files;
-            } else {
+            // No selection: export ALL images that have slices (no confirmation needed)
+            filesToExport = files.filter(f => f.slices && f.slices.length > 0);
+            if (filesToExport.length === 0) {
+                showNotification("没有已切片的图片可导出，请先识别图片", 'error');
                 return;
             }
         }
 
-        if (filesToExport.length === 0) return;
-
-        // Count total slices before processing
-        const totalSliceCount = filesToExport.reduce((sum, f) => sum + (f.slices?.length || 0), 0);
-        console.log(`[BatchExport] Files to export: ${filesToExport.length}, Total slices: ${totalSliceCount}`);
-
-        if (totalSliceCount === 0) {
-            showNotification("选中的图片都没有切片，请先识别或手动绘制", 'error');
-            return;
-        }
+        // Count total slices
+        const totalSliceCount = filesToExport.reduce((sum, f) => sum + f.slices.length, 0);
+        console.log(`[BatchExport] Exporting ${filesToExport.length} images with ${totalSliceCount} total slices`);
 
         setIsProcessing(true);
-        showNotification(`正在生成 ${totalSliceCount} 个切片的导出...`, 'info');
+        showNotification(`正在导出 ${filesToExport.length} 张图片的 ${totalSliceCount} 个切片...`, 'info');
+
         try {
             const promises = filesToExport.map(async (file, fileIdx) => {
-                console.log(`[BatchExport] Processing file ${fileIdx + 1}/${filesToExport.length}: ${file.file.name}, slices: ${file.slices?.length || 0}`);
-                if (file.slices && file.slices.length > 0) {
-                    const images = await generateSlices(file.previewUrl, file.slices, file.exportConfig);
-                    console.log(`[BatchExport] Generated ${images.length} images for ${file.file.name}`);
-                    return images.map((img, idx) => {
-                        const originalName = file.file.name.substring(0, file.file.name.lastIndexOf('.')) || 'image';
-                        return { src: img, name: `${originalName}_slice_${idx + 1}` };
-                    });
-                }
-                return [];
+                console.log(`[BatchExport] Processing ${fileIdx + 1}/${filesToExport.length}: ${file.file.name} (${file.slices.length} slices)`);
+                const images = await generateSlices(file.previewUrl, file.slices, file.exportConfig);
+                return images.map((img, idx) => {
+                    const originalName = file.file.name.substring(0, file.file.name.lastIndexOf('.')) || 'image';
+                    return { src: img, name: `${originalName}_slice_${idx + 1}` };
+                });
             });
+
             const results = await Promise.all(promises);
             const allImages = results.flat();
-            console.log(`[BatchExport] Total generated images: ${allImages.length}`);
+            console.log(`[BatchExport] Generated ${allImages.length} slice images`);
 
             if (allImages.length === 0) {
-                showNotification("没有可导出的切片，请确保图片已识别", 'error');
+                showNotification("切片生成失败", 'error');
                 return;
             }
+
             setExportedImages(allImages);
             setSelectedExportIndices(new Set(allImages.map((_, i) => i))); // Select all by default
             setExportModalOpen(true);
+            showNotification(`已加载 ${allImages.length} 个切片，请选择并下载`, 'success');
         } catch (e: any) {
             console.error('[BatchExport] Error:', e);
-            showNotification("导出出错", 'error');
+            showNotification("导出出错: " + e.message, 'error');
         } finally {
             setIsProcessing(false);
         }
@@ -921,6 +922,8 @@ function App() {
                 <Sidebar
                     activeFile={activeFile}
                     filesCount={files.length}
+                    slicedFilesCount={files.filter(f => f.slices && f.slices.length > 0).length}
+                    totalSliceCount={files.reduce((sum, f) => sum + (f.slices?.length || 0), 0)}
                     onModeChange={handleModeChange}
                     onGridUpdate={handleGridUpdate}
                     onScanConfigChange={(v) => updateFileAndDB(activeFile?.id || '', { scanTolerance: v })}
