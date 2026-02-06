@@ -50,6 +50,7 @@ function App() {
     const [isPaused, setIsPaused] = useState(false);
     const [concurrency, setConcurrency] = useState(1);
     const isPausedRef = useRef(false);
+    const cancelQueueRef = useRef(false); // For cancelling queue processing
 
     const [aiSettings, setAiSettings] = useState<AISettings>(() => {
         const saved = localStorage.getItem('smartslice_ai_settings');
@@ -239,11 +240,21 @@ function App() {
         // Clean up all Blob URLs to prevent memory leak
         files.forEach(f => URL.revokeObjectURL(f.previewUrl));
 
+        // Cancel any ongoing queue processing
+        cancelQueueRef.current = true;
+        isPausedRef.current = false;
+        setQueueProcessing(false);
+        setIsProcessing(false);
+        setIsPaused(false);
+
         await clearDB();
         setFiles([]);
         setActiveFileId(null);
         setSelectedIds(new Set());
-        showNotification('工作区已清空', 'info');
+        showNotification('工作区已清空，处理已取消', 'info');
+
+        // Reset cancel flag after a short delay
+        setTimeout(() => { cancelQueueRef.current = false; }, 100);
     };
 
     const toggleSelect = (id: string) => {
@@ -358,10 +369,18 @@ function App() {
         if (queueProcessing) return;
         setQueueProcessing(true);
         isPausedRef.current = false;
+        cancelQueueRef.current = false; // Reset cancel flag at start
 
         let processedCount = 0;
 
         const processFile = async (file: ImageFile) => {
+            // Check if cancelled before processing
+            if (cancelQueueRef.current) return 0;
+
+            // Check if file still exists
+            const currentFiles = filesRef.current;
+            if (!currentFiles.find(f => f.id === file.id)) return 0;
+
             await updateFileAndDB(file.id, { status: 'processing' });
 
             let result;
@@ -370,6 +389,9 @@ function App() {
             } else {
                 result = await processAiDetect(file);
             }
+
+            // Check again if file still exists and not cancelled
+            if (cancelQueueRef.current || !filesRef.current.find(f => f.id === file.id)) return 0;
 
             await updateFileAndDB(file.id, {
                 slices: result.slices,
@@ -380,16 +402,24 @@ function App() {
         };
 
         while (true) {
+            // Check for cancellation
+            if (cancelQueueRef.current) {
+                console.log('[Queue] Cancelled');
+                break;
+            }
+
             // Check for pause
             if (isPausedRef.current) {
                 await new Promise<void>(resolve => {
                     const checkPause = setInterval(() => {
-                        if (!isPausedRef.current) {
+                        if (!isPausedRef.current || cancelQueueRef.current) {
                             clearInterval(checkPause);
                             resolve();
                         }
                     }, 200);
                 });
+                // Check again if cancelled during pause
+                if (cancelQueueRef.current) break;
             }
 
             const currentFiles = filesRef.current;
@@ -399,14 +429,18 @@ function App() {
 
             // Process up to 'concurrency' files at once
             const batch = queuedFiles.slice(0, concurrency);
-            const results = await Promise.all(batch.map(processFile));
-            processedCount += results.reduce((a, b) => a + b, 0);
+            try {
+                const results = await Promise.all(batch.map(processFile));
+                processedCount += results.reduce((a, b) => a + b, 0);
+            } catch (e) {
+                console.error('[Queue] Error:', e);
+            }
         }
 
         setQueueProcessing(false);
         setIsProcessing(false);
         setIsPaused(false);
-        if (processedCount > 0) {
+        if (processedCount > 0 && !cancelQueueRef.current) {
             showNotification(`批量处理完成 (${processedCount} 张)`, 'success');
         }
     };
