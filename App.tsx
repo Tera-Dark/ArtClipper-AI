@@ -642,12 +642,23 @@ function App() {
 
         if (filesToExport.length === 0) return;
 
+        // Count total slices before processing
+        const totalSliceCount = filesToExport.reduce((sum, f) => sum + (f.slices?.length || 0), 0);
+        console.log(`[BatchExport] Files to export: ${filesToExport.length}, Total slices: ${totalSliceCount}`);
+
+        if (totalSliceCount === 0) {
+            showNotification("选中的图片都没有切片，请先识别或手动绘制", 'error');
+            return;
+        }
+
         setIsProcessing(true);
-        showNotification(`正在生成 ${filesToExport.length} 个文件的导出...`, 'info');
+        showNotification(`正在生成 ${totalSliceCount} 个切片的导出...`, 'info');
         try {
-            const promises = filesToExport.map(async (file) => {
-                if (file.slices.length > 0) {
+            const promises = filesToExport.map(async (file, fileIdx) => {
+                console.log(`[BatchExport] Processing file ${fileIdx + 1}/${filesToExport.length}: ${file.file.name}, slices: ${file.slices?.length || 0}`);
+                if (file.slices && file.slices.length > 0) {
                     const images = await generateSlices(file.previewUrl, file.slices, file.exportConfig);
+                    console.log(`[BatchExport] Generated ${images.length} images for ${file.file.name}`);
                     return images.map((img, idx) => {
                         const originalName = file.file.name.substring(0, file.file.name.lastIndexOf('.')) || 'image';
                         return { src: img, name: `${originalName}_slice_${idx + 1}` };
@@ -657,15 +668,17 @@ function App() {
             });
             const results = await Promise.all(promises);
             const allImages = results.flat();
+            console.log(`[BatchExport] Total generated images: ${allImages.length}`);
+
             if (allImages.length === 0) {
-                showNotification("没有可导出的切片", 'error');
+                showNotification("没有可导出的切片，请确保图片已识别", 'error');
                 return;
             }
             setExportedImages(allImages);
             setSelectedExportIndices(new Set(allImages.map((_, i) => i))); // Select all by default
             setExportModalOpen(true);
         } catch (e: any) {
-            console.error(e);
+            console.error('[BatchExport] Error:', e);
             showNotification("导出出错", 'error');
         } finally {
             setIsProcessing(false);
