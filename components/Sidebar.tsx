@@ -5,7 +5,7 @@ import {
   HandRaisedIcon, WrenchScrewdriverIcon, AdjustmentsHorizontalIcon,
   Cog6ToothIcon, Square2StackIcon, PlayCircleIcon, ArrowPathIcon,
   ArrowsRightLeftIcon, CheckBadgeIcon, ArchiveBoxArrowDownIcon,
-  BoltIcon, ArrowUturnLeftIcon, ArrowUturnRightIcon
+  BoltIcon, ArrowUturnLeftIcon, ArrowUturnRightIcon, PauseCircleIcon
 } from '@heroicons/react/24/outline';
 
 interface SidebarProps {
@@ -28,6 +28,14 @@ interface SidebarProps {
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  // New props for pause/concurrency/delete
+  isPaused?: boolean;
+  onPauseResume?: () => void;
+  concurrency?: number;
+  onConcurrencyChange?: (value: number) => void;
+  selectedCount?: number;
+  onDeleteSelected?: () => void;
+  queueProcessing?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -46,7 +54,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onBatchAction,
   onApplySettingsToAll,
   onUndo, onRedo, canUndo, canRedo,
-  processingMessage
+  processingMessage,
+  // New props
+  isPaused = false,
+  onPauseResume,
+  concurrency = 1,
+  onConcurrencyChange,
+  selectedCount = 0,
+  onDeleteSelected,
+  queueProcessing = false
 }) => {
   const [rows, setRows] = useState(activeFile?.gridConfigs.rows || 2);
   const [cols, setCols] = useState(activeFile?.gridConfigs.cols || 2);
@@ -375,6 +391,59 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <BatchButton action="export" icon={ArchiveBoxArrowDownIcon} label="导出" />
               <BatchButton action="clear" icon={TrashIcon} label="清空" />
             </div>
+
+            {/* Pause/Resume & Concurrency Controls */}
+            {queueProcessing && (
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-100 rounded-xl animate-in fade-in duration-300">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-blue-700">处理中...</span>
+                  {onPauseResume && (
+                    <button
+                      onClick={onPauseResume}
+                      className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isPaused
+                          ? 'bg-green-500 text-white hover:bg-green-600'
+                          : 'bg-yellow-500 text-white hover:bg-yellow-600'
+                        }`}
+                    >
+                      {isPaused ? (
+                        <><PlayCircleIcon className="w-4 h-4 mr-1" /> 继续</>
+                      ) : (
+                        <><PauseCircleIcon className="w-4 h-4 mr-1" /> 暂停</>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Concurrency Control */}
+            {onConcurrencyChange && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-slate-500">并发数</label>
+                  <span className="text-xs font-bold text-slate-700">{concurrency}</span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="5"
+                  value={concurrency}
+                  onChange={(e) => onConcurrencyChange(parseInt(e.target.value))}
+                  className="w-full h-1.5 bg-slate-100 rounded-full appearance-none cursor-pointer accent-slate-800 mt-2"
+                />
+              </div>
+            )}
+
+            {/* Delete Selected */}
+            {selectedCount > 0 && onDeleteSelected && (
+              <button
+                onClick={onDeleteSelected}
+                className="mt-3 w-full py-2 bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 rounded-xl text-xs font-semibold flex items-center justify-center transition-colors"
+              >
+                <TrashIcon className="w-4 h-4 mr-1.5" />
+                删除选中 ({selectedCount})
+              </button>
+            )}
           </section>
         )}
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Editor } from './components/Editor';
 import { SettingsModal } from './components/SettingsModal';
+import SlicePreviewPanel from './components/SlicePreviewPanel';
 import { generateGridSlices, generateSlices, scanForSprites } from './utils/imageUtils';
 import { detectSegments } from './services/geminiService';
 import { loadFilesFromDB, saveFileToDB, deleteFileFromDB, clearDB } from './utils/db';
@@ -42,6 +43,11 @@ function App() {
     const [isDrawable, setIsDrawable] = useState(false); // Add this if missing or use existing logic
     const [selectedExportIndices, setSelectedExportIndices] = useState<Set<number>>(new Set()); // New state for export selection
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
+    // New feature states
+    const [isPaused, setIsPaused] = useState(false);
+    const [concurrency, setConcurrency] = useState(1);
+    const isPausedRef = useRef(false);
 
     const [aiSettings, setAiSettings] = useState<AISettings>(() => {
         const saved = localStorage.getItem('smartslice_ai_settings');
@@ -345,45 +351,89 @@ function App() {
         }
     };
 
-    // --- QUEUE SYSTEM ---
+    // --- QUEUE SYSTEM (with pause & concurrency) ---
     const processQueue = async () => {
         if (queueProcessing) return;
         setQueueProcessing(true);
+        isPausedRef.current = false;
 
-        let hasMore = true;
         let processedCount = 0;
 
-        while (hasMore) {
-            const currentFiles = filesRef.current;
-            const nextFile = currentFiles.find(f => f.status === 'queued');
-
-            if (!nextFile) {
-                hasMore = false;
-                break;
-            }
-
-            await updateFileAndDB(nextFile.id, { status: 'processing' });
+        const processFile = async (file: ImageFile) => {
+            await updateFileAndDB(file.id, { status: 'processing' });
 
             let result;
-            if (nextFile.mode === SliceMode.SCAN) {
-                result = await processScanDetect(nextFile);
+            if (file.mode === SliceMode.SCAN) {
+                result = await processScanDetect(file);
             } else {
-                result = await processAiDetect(nextFile);
+                result = await processAiDetect(file);
             }
 
-            await updateFileAndDB(nextFile.id, {
+            await updateFileAndDB(file.id, {
                 slices: result.slices,
                 status: result.status,
-                mode: nextFile.mode
+                mode: file.mode
             });
-            processedCount++;
+            return 1;
+        };
+
+        while (true) {
+            // Check for pause
+            if (isPausedRef.current) {
+                await new Promise<void>(resolve => {
+                    const checkPause = setInterval(() => {
+                        if (!isPausedRef.current) {
+                            clearInterval(checkPause);
+                            resolve();
+                        }
+                    }, 200);
+                });
+            }
+
+            const currentFiles = filesRef.current;
+            const queuedFiles = currentFiles.filter(f => f.status === 'queued');
+
+            if (queuedFiles.length === 0) break;
+
+            // Process up to 'concurrency' files at once
+            const batch = queuedFiles.slice(0, concurrency);
+            const results = await Promise.all(batch.map(processFile));
+            processedCount += results.reduce((a, b) => a + b, 0);
         }
 
         setQueueProcessing(false);
         setIsProcessing(false);
+        setIsPaused(false);
         if (processedCount > 0) {
             showNotification(`批量处理完成 (${processedCount} 张)`, 'success');
         }
+    };
+
+    // Pause/Resume handlers
+    const handlePauseResume = () => {
+        if (isPaused) {
+            isPausedRef.current = false;
+            setIsPaused(false);
+            showNotification('已继续处理', 'info');
+        } else {
+            isPausedRef.current = true;
+            setIsPaused(true);
+            showNotification('已暂停处理', 'info');
+        }
+    };
+
+    // Delete selected files
+    const handleDeleteSelected = async () => {
+        if (selectedIds.size === 0) {
+            showNotification('请先选择要删除的图片', 'error');
+            return;
+        }
+        const count = selectedIds.size;
+        for (const id of selectedIds) {
+            await removeFileFromApp(id);
+        }
+        setSelectedIds(new Set());
+        showNotification(`已删除 ${count} 张图片`, 'success');
     };
 
     // --- Batch Execution Handlers ---
@@ -758,6 +808,15 @@ function App() {
                                         <div className="absolute bottom-1 right-1 z-20">
                                             <FileStatusIcon status={file.status} />
                                         </div>
+
+                                        {/* Delete Button (on hover) */}
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); removeFileFromApp(file.id); }}
+                                            className="absolute bottom-1 left-1 z-30 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
+                                            title="删除"
+                                        >
+                                            <TrashIcon className="w-3 h-3" />
+                                        </button>
                                     </div>
                                 )
                             })}
@@ -800,20 +859,35 @@ function App() {
             {/* Main Area */}
             <div className="flex-1 flex flex-col h-full relative bg-slate-50 min-w-0">
                 {/* Workspace */}
-                <div className="flex-1 relative overflow-hidden flex items-center justify-center p-8">
+                <div className="flex-1 relative overflow-hidden flex flex-col min-h-0">
                     {activeFile ? (
-                        <div className="w-full h-full shadow-soft rounded-3xl overflow-hidden bg-white border border-slate-100 ring-4 ring-slate-100/50">
-                            <Editor
-                                imageSrc={activeFile.previewUrl}
+                        <>
+                            {/* Editor */}
+                            <div className="flex-1 p-8 overflow-hidden flex items-center justify-center min-h-0">
+                                <div className="w-full h-full shadow-soft rounded-3xl overflow-hidden bg-white border border-slate-100 ring-4 ring-slate-100/50">
+                                    <Editor
+                                        imageSrc={activeFile.previewUrl}
+                                        slices={activeFile.slices}
+                                        onSlicesChange={(slices) => updateFileAndDB(activeFile.id, { slices })}
+                                        selectedSliceId={selectedSliceId}
+                                        onSelectSlice={setSelectedSliceId}
+                                        onLoadImage={(w, h) => updateFileAndDB(activeFile.id, { originalWidth: w, originalHeight: h })}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Slice Preview Panel */}
+                            <SlicePreviewPanel
+                                imageUrl={activeFile.previewUrl}
                                 slices={activeFile.slices}
-                                onSlicesChange={(slices) => updateFileAndDB(activeFile.id, { slices })}
+                                originalWidth={activeFile.originalWidth || 1}
+                                originalHeight={activeFile.originalHeight || 1}
+                                onSliceSelect={setSelectedSliceId}
                                 selectedSliceId={selectedSliceId}
-                                onSelectSlice={setSelectedSliceId}
-                                onLoadImage={(w, h) => updateFileAndDB(activeFile.id, { originalWidth: w, originalHeight: h })}
                             />
-                        </div>
+                        </>
                     ) : (
-                        <div className="flex flex-col items-center justify-center text-slate-400 animate-in fade-in zoom-in duration-500 select-none">
+                        <div className="flex-1 flex flex-col items-center justify-center text-slate-400 animate-in fade-in zoom-in duration-500 select-none p-8">
                             <div className="w-32 h-32 bg-white rounded-full flex items-center justify-center mb-8 shadow-soft border border-slate-50">
                                 <PhotoIcon className="w-12 h-12 text-slate-300" />
                             </div>
@@ -864,6 +938,14 @@ function App() {
                             else handleRunBatch('AI');
                         }
                     }}
+                    // New props for pause/concurrency/delete
+                    isPaused={isPaused}
+                    onPauseResume={handlePauseResume}
+                    concurrency={concurrency}
+                    onConcurrencyChange={setConcurrency}
+                    selectedCount={selectedIds.size}
+                    onDeleteSelected={handleDeleteSelected}
+                    queueProcessing={queueProcessing}
                 />
 
                 {/* Export Modal */}
