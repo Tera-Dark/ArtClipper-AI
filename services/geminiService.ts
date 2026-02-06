@@ -232,8 +232,23 @@ Return ONLY valid JSON, no markdown.`;
         }
       ];
       const data = await makeOpenAIRequest(settings, messages, 90000);
-      console.log("OpenAI-Compatible Raw Response:", data);
-      text = data.choices?.[0]?.message?.content;
+      console.log("OpenAI-Compatible Raw Response:", JSON.stringify(data, null, 2));
+
+      // Debug: Check response structure
+      if (data.choices && data.choices[0]) {
+        console.log("[API Debug] Choice 0:", JSON.stringify(data.choices[0], null, 2));
+        text = data.choices[0].message?.content;
+
+        // Some proxies return content in different formats
+        if (!text && data.choices[0].text) {
+          text = data.choices[0].text;
+        }
+      }
+
+      // If still empty, check for error in response
+      if (!text && data.error) {
+        throw new Error(`API 错误: ${data.error.message || JSON.stringify(data.error)}`);
+      }
     } else {
       // Google Native Mode
       const payload = {
