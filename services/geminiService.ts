@@ -99,7 +99,7 @@ async function makeOpenAIRequest(
   const payload = {
     model: modelName,
     messages: messages,
-    max_tokens: 2048  // Reduced to prevent long responses
+    max_tokens: 8192  // Gemini uses reasoning tokens internally, need higher limit
   };
 
   const bodyStr = JSON.stringify(payload);
