@@ -321,30 +321,49 @@ Return ONLY valid JSON, no markdown.`;
       return [];
     }
 
-    // Detect if coordinates are absolute pixels or normalized (0-1)
-    // If any value > 1, it's likely absolute pixel coordinates
-    const isAbsoluteCoords = result.boxes.some((box: any) => {
+    // Detect coordinate format:
+    // 1. Normalized (0-1): all values between 0 and 1
+    // 2. Google 0-1000 scale: values roughly 0-1000
+    // 3. Absolute pixels: values match compressed image dimensions
+
+    let maxVal = 0;
+    result.boxes.forEach((box: any) => {
       if (Array.isArray(box)) {
-        return box.some((v: number) => v > 1);
+        box.forEach((v: number) => { if (v > maxVal) maxVal = v; });
       }
-      return (box.xmin > 1 || box.ymin > 1 || box.xmax > 1 || box.ymax > 1);
     });
 
-    // Get compressed image dimensions for absolute coordinate normalization
-    // We compressed to max 768px, so calculate the compression ratio
-    const maxCompressedSize = 768;
-    let compressedW = imgW, compressedH = imgH;
-    if (imgW > maxCompressedSize || imgH > maxCompressedSize) {
-      if (imgW > imgH) {
-        compressedH = Math.round((imgH * maxCompressedSize) / imgW);
-        compressedW = maxCompressedSize;
-      } else {
-        compressedW = Math.round((imgW * maxCompressedSize) / imgH);
-        compressedH = maxCompressedSize;
+    // Determine the scale factor
+    let scaleFactor = 1;
+    let coordFormat = 'normalized';
+
+    if (maxVal > 1 && maxVal <= 1.5) {
+      // Likely normalized but with some rounding error
+      scaleFactor = 1;
+      coordFormat = 'normalized';
+    } else if (maxVal > 1 && maxVal <= 1000) {
+      // Google Gemini 0-1000 format
+      scaleFactor = 1000;
+      coordFormat = '0-1000';
+    } else if (maxVal > 1000) {
+      // Absolute pixel coordinates (larger images)
+      // Use compressed image max dimension
+      const maxCompressedSize = 768;
+      let compressedW = imgW, compressedH = imgH;
+      if (imgW > maxCompressedSize || imgH > maxCompressedSize) {
+        if (imgW > imgH) {
+          compressedH = Math.round((imgH * maxCompressedSize) / imgW);
+          compressedW = maxCompressedSize;
+        } else {
+          compressedW = Math.round((imgW * maxCompressedSize) / imgH);
+          compressedH = maxCompressedSize;
+        }
       }
+      scaleFactor = Math.max(compressedW, compressedH);
+      coordFormat = 'absolute-pixels';
     }
 
-    console.log(`[Box Parse] isAbsoluteCoords: ${isAbsoluteCoords}, compressedSize: ${compressedW}x${compressedH}, originalSize: ${imgW}x${imgH}`);
+    console.log(`[Box Parse] format: ${coordFormat}, maxVal: ${maxVal}, scaleFactor: ${scaleFactor}, originalSize: ${imgW}x${imgH}`);
 
     return result.boxes
       .map((box: any, index: number) => {
@@ -352,39 +371,46 @@ Return ONLY valid JSON, no markdown.`;
 
         if (Array.isArray(box)) {
           if (box.length >= 4) {
-            // Detect format: [x1,y1,x2,y2] vs [ymin,xmin,ymax,xmax]
-            // Heuristic: if 0th value < 2nd value AND 1st value < 3rd value consistently, it's start-end format
             let v0 = box[0], v1 = box[1], v2 = box[2], v3 = box[3];
 
-            if (isAbsoluteCoords) {
-              // Normalize to 0-1 using compressed image dimensions
-              v0 = v0 / compressedW;
-              v1 = v1 / compressedH;
-              v2 = v2 / compressedW;
-              v3 = v3 / compressedH;
-
-              // Format appears to be [x1, y1, x2, y2] based on the new API
-              x = Math.min(v0, v2);
-              y = Math.min(v1, v3);
-              w = Math.abs(v2 - v0);
-              h = Math.abs(v3 - v1);
-            } else {
-              // Original format: [ymin, xmin, ymax, xmax] normalized
-              const [ymin, xmin, ymax, xmax] = box;
-              x = xmin;
-              y = ymin;
-              w = xmax - xmin;
-              h = ymax - ymin;
+            // Normalize all values to 0-1 range
+            if (scaleFactor > 1) {
+              v0 = v0 / scaleFactor;
+              v1 = v1 / scaleFactor;
+              v2 = v2 / scaleFactor;
+              v3 = v3 / scaleFactor;
             }
+
+            // Auto-detect format: [ymin, xmin, ymax, xmax] vs [x1, y1, x2, y2]
+            // Google Gemini typically uses [ymin, xmin, ymax, xmax]
+            // Other APIs might use [x1, y1, x2, y2]
+            // Heuristic: Check which interpretation makes geometric sense
+
+            // Assume [ymin, xmin, ymax, xmax] first (Google format)
+            let ymin = v0, xmin = v1, ymax = v2, xmax = v3;
+
+            // Validate: if ymin > ymax or xmin > xmax, swap interpretation
+            if (ymin > ymax || xmin > xmax) {
+              // Try [x1, y1, x2, y2] format
+              xmin = Math.min(v0, v2);
+              ymin = Math.min(v1, v3);
+              xmax = Math.max(v0, v2);
+              ymax = Math.max(v1, v3);
+            }
+
+            x = xmin;
+            y = ymin;
+            w = xmax - xmin;
+            h = ymax - ymin;
           } else {
             return null;
           }
         } else if (typeof box === 'object') {
           // Object format {xmin, ymin, xmax, ymax}
           let { ymin, xmin, ymax, xmax } = box;
-          if (isAbsoluteCoords) {
-            xmin /= compressedW; xmax /= compressedW;
-            ymin /= compressedH; ymax /= compressedH;
+          if (scaleFactor > 1) {
+            xmin /= scaleFactor; xmax /= scaleFactor;
+            ymin /= scaleFactor; ymax /= scaleFactor;
           }
           x = xmin; y = ymin;
           w = xmax - xmin; h = ymax - ymin;
