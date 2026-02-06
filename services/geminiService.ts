@@ -321,21 +321,88 @@ Return ONLY valid JSON, no markdown.`;
       return [];
     }
 
+    // Detect if coordinates are absolute pixels or normalized (0-1)
+    // If any value > 1, it's likely absolute pixel coordinates
+    const isAbsoluteCoords = result.boxes.some((box: any) => {
+      if (Array.isArray(box)) {
+        return box.some((v: number) => v > 1);
+      }
+      return (box.xmin > 1 || box.ymin > 1 || box.xmax > 1 || box.ymax > 1);
+    });
+
+    // Get compressed image dimensions for absolute coordinate normalization
+    // We compressed to max 768px, so calculate the compression ratio
+    const maxCompressedSize = 768;
+    let compressedW = imgW, compressedH = imgH;
+    if (imgW > maxCompressedSize || imgH > maxCompressedSize) {
+      if (imgW > imgH) {
+        compressedH = Math.round((imgH * maxCompressedSize) / imgW);
+        compressedW = maxCompressedSize;
+      } else {
+        compressedW = Math.round((imgW * maxCompressedSize) / imgH);
+        compressedH = maxCompressedSize;
+      }
+    }
+
+    console.log(`[Box Parse] isAbsoluteCoords: ${isAbsoluteCoords}, compressedSize: ${compressedW}x${compressedH}, originalSize: ${imgW}x${imgH}`);
+
     return result.boxes
       .map((box: any, index: number) => {
-        let ymin, xmin, ymax, xmax;
+        let x, y, w, h;
+
         if (Array.isArray(box)) {
-          if (box.length >= 4) [ymin, xmin, ymax, xmax] = box;
-          else return null;
+          if (box.length >= 4) {
+            // Detect format: [x1,y1,x2,y2] vs [ymin,xmin,ymax,xmax]
+            // Heuristic: if 0th value < 2nd value AND 1st value < 3rd value consistently, it's start-end format
+            let v0 = box[0], v1 = box[1], v2 = box[2], v3 = box[3];
+
+            if (isAbsoluteCoords) {
+              // Normalize to 0-1 using compressed image dimensions
+              v0 = v0 / compressedW;
+              v1 = v1 / compressedH;
+              v2 = v2 / compressedW;
+              v3 = v3 / compressedH;
+
+              // Format appears to be [x1, y1, x2, y2] based on the new API
+              x = Math.min(v0, v2);
+              y = Math.min(v1, v3);
+              w = Math.abs(v2 - v0);
+              h = Math.abs(v3 - v1);
+            } else {
+              // Original format: [ymin, xmin, ymax, xmax] normalized
+              const [ymin, xmin, ymax, xmax] = box;
+              x = xmin;
+              y = ymin;
+              w = xmax - xmin;
+              h = ymax - ymin;
+            }
+          } else {
+            return null;
+          }
+        } else if (typeof box === 'object') {
+          // Object format {xmin, ymin, xmax, ymax}
+          let { ymin, xmin, ymax, xmax } = box;
+          if (isAbsoluteCoords) {
+            xmin /= compressedW; xmax /= compressedW;
+            ymin /= compressedH; ymax /= compressedH;
+          }
+          x = xmin; y = ymin;
+          w = xmax - xmin; h = ymax - ymin;
         } else {
-          ({ ymin, xmin, ymax, xmax } = box);
+          return null;
         }
 
-        if (ymin === undefined || xmin === undefined) return null;
+        if (x === undefined || y === undefined) return null;
+
+        // Clamp to 0-1 range
+        x = Math.max(0, Math.min(1, x));
+        y = Math.max(0, Math.min(1, y));
+        w = Math.max(0, Math.min(1 - x, w));
+        h = Math.max(0, Math.min(1 - y, h));
 
         return {
           id: `ai-slice-${Date.now()}-${index}`,
-          x: xmin, y: ymin, width: xmax - xmin, height: ymax - ymin,
+          x, y, width: w, height: h,
         };
       })
       .filter((box: any) => {
