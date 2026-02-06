@@ -1,0 +1,5 @@
+{
+  "name": "智能切图 AI",
+  "description": "基于 AI 和算法的智能图像分割工具，适用于表情包、游戏素材和拼图拆分，支持智能检测与精准编辑。",
+  "requestFramePermissions": []
+}
