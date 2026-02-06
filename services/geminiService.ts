@@ -99,8 +99,11 @@ async function makeOpenAIRequest(
   const payload = {
     model: modelName,
     messages: messages,
-    max_tokens: 4096
+    max_tokens: 2048  // Reduced to prevent long responses
   };
+
+  const bodyStr = JSON.stringify(payload);
+  console.log(`[API Debug] Request body size: ${Math.round(bodyStr.length / 1024)}KB`);
 
   const timeoutPromise = new Promise((_, reject) =>
     setTimeout(() => reject(new Error(`请求超时 (${Math.round(timeoutMs / 1000)}秒)，请稍后重试。`)), timeoutMs)
@@ -112,7 +115,7 @@ async function makeOpenAIRequest(
       "Content-Type": "application/json",
       "Authorization": `Bearer ${apiKey}`
     },
-    body: JSON.stringify(payload)
+    body: bodyStr
   });
 
   const response = await Promise.race([fetchPromise, timeoutPromise]) as Response;
@@ -199,8 +202,9 @@ export const detectSegments = async (file: File, settings: AISettings): Promise<
     const { width: imgW, height: imgH } = await getImageDimensions(file);
     const MIN_SIZE_PX = 64;
 
-    // Use compressed image for faster API calls (key optimization!)
-    const { base64: base64Data, mimeType } = await compressAndConvertToBase64(file, 1280, 0.85);
+    // Use aggressively compressed image for faster API calls
+    // Smaller = faster upload, faster processing, less likely to timeout
+    const { base64: base64Data, mimeType } = await compressAndConvertToBase64(file, 768, 0.65);
 
     const prompt = settings.systemPrompt || `Identify ALL bounding boxes for distinct elements in this image.
 
