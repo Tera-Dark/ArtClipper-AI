@@ -3,8 +3,8 @@ import { BoundingBox, AISettings } from "../types";
 import { GEMINI_MODEL_VISION } from "../constants";
 
 // Helper to compress image and convert to base64
-// Cherry Studio likely does similar compression - this brings our performance in line
-const compressAndConvertToBase64 = async (file: File, maxSize: number = 1280, quality: number = 0.8): Promise<{ base64: string, mimeType: string }> => {
+// Keep original MIME type for better proxy compatibility
+const compressAndConvertToBase64 = async (file: File, maxSize: number = 1024, quality: number = 0.75): Promise<{ base64: string, mimeType: string }> => {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
@@ -31,12 +31,12 @@ const compressAndConvertToBase64 = async (file: File, maxSize: number = 1280, qu
       const ctx = canvas.getContext('2d')!;
       ctx.drawImage(img, 0, 0, width, height);
 
-      // Convert to JPEG for better compression (unless PNG is needed for transparency)
-      const mimeType = 'image/jpeg';
+      // Keep original MIME type for better compatibility with proxies
+      const mimeType = file.type || 'image/jpeg';
       const dataUrl = canvas.toDataURL(mimeType, quality);
       const base64 = dataUrl.split(',')[1];
 
-      console.log(`[Image Compression] ${file.name}: ${img.naturalWidth}x${img.naturalHeight} → ${width}x${height}, ~${Math.round(base64.length / 1024)}KB`);
+      console.log(`[Image Compression] ${file.name}: ${img.naturalWidth}x${img.naturalHeight} → ${width}x${height}, type=${mimeType}, ~${Math.round(base64.length / 1024)}KB`);
 
       resolve({ base64, mimeType });
     };
@@ -222,12 +222,13 @@ Return ONLY valid JSON, no markdown.`;
 
     if (settings.useCustomUrl && settings.baseUrl) {
       // OpenAI-Compatible Mode (Vision with base64 image)
+      // Note: Text BEFORE image for better proxy compatibility
       const messages: OpenAIChatMessage[] = [
         {
           role: 'user',
           content: [
-            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
-            { type: 'text', text: prompt }
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } }
           ]
         }
       ];
