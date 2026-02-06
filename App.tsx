@@ -8,6 +8,8 @@ import { detectSegments } from './services/geminiService';
 import { loadFilesFromDB, saveFileToDB, deleteFileFromDB, clearDB } from './utils/db';
 import { ImageFile, SliceMode, ExportConfig, AISettings, BoundingBox } from './types';
 import { GEMINI_MODEL_VISION } from './constants';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 import {
     PlusIcon, PhotoIcon, XMarkIcon, ArrowDownTrayIcon, CheckCircleIcon,
     CloudArrowUpIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon,
@@ -1002,14 +1004,50 @@ function App() {
                             <div className="px-8 py-6 border-t border-slate-100 bg-white flex justify-end space-x-4">
                                 <button onClick={() => setExportModalOpen(false)} className="px-8 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl">取消</button>
                                 <button
-                                    onClick={() => {
+                                    onClick={async () => {
                                         const imagesToDownload = exportedImages.filter((_, i) => selectedExportIndices.has(i));
                                         if (imagesToDownload.length === 0) {
                                             showNotification('请先选择要导出的图片', 'error');
                                             return;
                                         }
-                                        imagesToDownload.forEach(img => { const link = document.createElement('a'); link.href = img.src; link.download = `${img.name}.${activeFile?.exportConfig.fileFormat || 'png'}`; document.body.appendChild(link); link.click(); document.body.removeChild(link); });
-                                        showNotification(`开始下载 ${imagesToDownload.length} 个文件`, 'success');
+
+                                        const format = activeFile?.exportConfig.fileFormat || 'png';
+
+                                        // For small batches (<=5), use direct download
+                                        if (imagesToDownload.length <= 5) {
+                                            for (const img of imagesToDownload) {
+                                                const link = document.createElement('a');
+                                                link.href = img.src;
+                                                link.download = `${img.name}.${format}`;
+                                                document.body.appendChild(link);
+                                                link.click();
+                                                document.body.removeChild(link);
+                                                await new Promise(r => setTimeout(r, 100)); // Small delay between downloads
+                                            }
+                                            showNotification(`已下载 ${imagesToDownload.length} 个文件`, 'success');
+                                        } else {
+                                            // For large batches, pack into ZIP
+                                            showNotification(`正在打包 ${imagesToDownload.length} 个文件为 ZIP...`, 'info');
+                                            try {
+                                                const zip = new JSZip();
+                                                const folder = zip.folder('slices');
+
+                                                for (let i = 0; i < imagesToDownload.length; i++) {
+                                                    const img = imagesToDownload[i];
+                                                    // Extract base64 data from data URL
+                                                    const base64Data = img.src.split(',')[1];
+                                                    folder?.file(`${img.name}.${format}`, base64Data, { base64: true });
+                                                }
+
+                                                const content = await zip.generateAsync({ type: 'blob' });
+                                                const timestamp = new Date().toISOString().slice(0, 10);
+                                                saveAs(content, `slices_${timestamp}.zip`);
+                                                showNotification(`已导出 ${imagesToDownload.length} 个切片为 ZIP`, 'success');
+                                            } catch (e) {
+                                                console.error('ZIP export error:', e);
+                                                showNotification('ZIP 打包失败', 'error');
+                                            }
+                                        }
                                     }}
                                     disabled={selectedExportIndices.size === 0}
                                     className="px-8 py-3 bg-primary hover:bg-primaryHover disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl font-bold shadow-lg flex items-center transition-all"
